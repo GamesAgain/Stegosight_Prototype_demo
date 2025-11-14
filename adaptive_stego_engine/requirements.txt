@@ -1,0 +1,7 @@
+numpy
+pillow
+scipy
+cryptography
+argon2-cffi
+tqdm
+PyQt6
