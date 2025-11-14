@@ -1,0 +1,12 @@
+QWidget {
+    font-family: "Segoe UI", "Arial", sans-serif;
+    font-size: 11pt;
+}
+
+QPushButton {
+    padding: 6px 12px;
+}
+
+QLabel {
+    color: #222;
+}
