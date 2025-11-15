@@ -5,115 +5,182 @@ from pathlib import Path
 from typing import Optional
 
 import numpy as np
-from PyQt6 import QtCore, QtGui, QtWidgets
+from PyQt6.QtCore import Qt
+from PyQt6.QtGui import QImage, QPixmap
+from PyQt6.QtWidgets import (
+    QCheckBox,
+    QFileDialog,
+    QGridLayout,
+    QGroupBox,
+    QLabel,
+    QLineEdit,
+    QMessageBox,
+    QPushButton,
+    QPlainTextEdit,
+    QVBoxLayout,
+    QWidget,
+)
 
-from ..extractor.extract_controller import AdaptiveExtractor
-from ..util.image_io import InvalidImageFormatError, load_png
+from ..extractor.extract_controller import extract_payload
+from ..util import image_io
 
 
-class ExtractTab(QtWidgets.QWidget):
-    def __init__(self, parent: Optional[QtWidgets.QWidget] = None) -> None:
+class ExtractTab(QWidget):
+    """Tab widget that performs the reverse pipeline to recover payloads."""
+
+    def __init__(self, parent: Optional[QWidget] = None) -> None:
         super().__init__(parent)
-        self._stego_array: Optional[np.ndarray] = None
-        self._password_input = QtWidgets.QLineEdit()
-        self._encrypted_checkbox = QtWidgets.QCheckBox("Payload is encrypted")
-        self._output_edit = QtWidgets.QPlainTextEdit()
-        self._preview_label = QtWidgets.QLabel()
-        self._setup_ui()
+        self.stego_path: Optional[Path] = None
+        self.stego_image: Optional[np.ndarray] = None
+        self.extracted_text: Optional[str] = None
 
-    def _setup_ui(self) -> None:
-        layout = QtWidgets.QVBoxLayout(self)
+        self._build_ui()
 
-        select_button = QtWidgets.QPushButton("Select Stego PNG")
-        select_button.clicked.connect(self._select_stego)
-        layout.addWidget(select_button)
+    # ------------------------------------------------------------------ UI --
+    def _build_ui(self) -> None:
+        layout = QVBoxLayout(self)
 
-        self._preview_label.setFixedHeight(200)
-        self._preview_label.setAlignment(QtCore.Qt.AlignmentFlag.AlignCenter)
-        self._preview_label.setStyleSheet("border: 1px solid #666;")
-        layout.addWidget(self._preview_label)
+        stego_group = QGroupBox("Stego Image")
+        stego_layout = QGridLayout(stego_group)
 
-        form = QtWidgets.QFormLayout()
-        self._password_input.setPlaceholderText("Seed / Password")
-        form.addRow("Seed / Password:", self._password_input)
-        form.addRow(self._encrypted_checkbox)
-        layout.addLayout(form)
+        self.stego_label = QLabel("No stego image selected")
+        self.stego_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.stego_label.setMinimumHeight(220)
+        self.stego_label.setStyleSheet("border: 1px solid #444; background: #111;")
 
-        extract_button = QtWidgets.QPushButton("Extract")
-        extract_button.clicked.connect(self._run_extract)
-        layout.addWidget(extract_button)
+        select_stego_btn = QPushButton("Select Stego PNG")
+        select_stego_btn.clicked.connect(self._on_select_stego)
 
-        layout.addWidget(QtWidgets.QLabel("Recovered Payload:"))
-        self._output_edit.setReadOnly(False)
-        layout.addWidget(self._output_edit)
+        stego_layout.addWidget(self.stego_label, 0, 0, 1, 2)
+        stego_layout.addWidget(select_stego_btn, 1, 0, 1, 2)
 
-        save_button = QtWidgets.QPushButton("Save .txt")
-        save_button.clicked.connect(self._save_text)
-        layout.addWidget(save_button)
+        controls_group = QGroupBox("Extraction Settings")
+        controls_layout = QGridLayout(controls_group)
 
-        layout.addStretch()
+        self.seed_input = QLineEdit()
+        self.seed_input.setPlaceholderText("Seed / Password")
+        self.seed_input.setEchoMode(QLineEdit.EchoMode.Password)
 
-    def _select_stego(self) -> None:
-        file_dialog = QtWidgets.QFileDialog(self)
-        file_dialog.setNameFilter("PNG Images (*.png)")
-        if file_dialog.exec() == QtWidgets.QDialog.DialogCode.Accepted:
-            path = file_dialog.selectedFiles()[0]
-            try:
-                array, _ = load_png(path)
-            except InvalidImageFormatError as exc:
-                QtWidgets.QMessageBox.critical(self, "Invalid Image", str(exc))
-                return
-            self._stego_array = array
-            self._show_preview(array)
+        self.encrypted_checkbox = QCheckBox("Payload is encrypted")
+        self.encrypted_checkbox.setChecked(True)
 
-    def _run_extract(self) -> None:
-        if self._stego_array is None:
-            QtWidgets.QMessageBox.warning(self, "No Stego", "Load a stego PNG first.")
+        self.extract_button = QPushButton("Extract Payload")
+        self.extract_button.clicked.connect(self._on_extract)
+
+        self.status_label = QLabel("Idle")
+        self.status_label.setWordWrap(True)
+
+        controls_layout.addWidget(QLabel("Seed / Password:"), 0, 0)
+        controls_layout.addWidget(self.seed_input, 0, 1)
+        controls_layout.addWidget(self.encrypted_checkbox, 1, 0, 1, 2)
+        controls_layout.addWidget(self.extract_button, 2, 0, 1, 2)
+        controls_layout.addWidget(self.status_label, 3, 0, 1, 2)
+
+        payload_group = QGroupBox("Recovered Payload")
+        payload_layout = QVBoxLayout(payload_group)
+
+        self.payload_view = QPlainTextEdit()
+        self.payload_view.setReadOnly(True)
+        payload_layout.addWidget(self.payload_view)
+
+        save_btn = QPushButton("Save Payload as .txt")
+        save_btn.clicked.connect(self._on_save_text)
+        payload_layout.addWidget(save_btn)
+
+        layout.addWidget(stego_group)
+        layout.addWidget(controls_group)
+        layout.addWidget(payload_group)
+        layout.addStretch(1)
+
+    # -------------------------------------------------------------- Handlers --
+    def _on_select_stego(self) -> None:
+        file_path, _ = QFileDialog.getOpenFileName(
+            self,
+            "Select Stego PNG",
+            "",
+            "PNG Images (*.png)",
+        )
+        if not file_path:
             return
-        seed = self._password_input.text().strip()
+
+        try:
+            image = image_io.load_png(Path(file_path))
+        except ValueError as exc:
+            QMessageBox.warning(self, "Invalid Stego", str(exc))
+            return
+
+        self.stego_path = Path(file_path)
+        self.stego_image = image
+        self.extracted_text = None
+        self.payload_view.clear()
+        self._update_preview(image)
+        self.status_label.setText(
+            f"Loaded stego: {self.stego_path.name} ({image.shape[1]}x{image.shape[0]})"
+        )
+
+    def _on_extract(self) -> None:
+        if self.stego_image is None:
+            QMessageBox.warning(self, "Missing Stego", "Please select a PNG stego image first.")
+            return
+
+        seed = self.seed_input.text().strip()
         if not seed:
-            QtWidgets.QMessageBox.warning(self, "Missing Seed", "Seed/password is required.")
+            QMessageBox.warning(self, "Missing Seed", "Provide the seed/password used during embedding.")
             return
-        extractor = AdaptiveExtractor(seed=seed, password=seed if self._encrypted_checkbox.isChecked() else "")
-        try:
-            result = extractor.extract(self._stego_array)
-        except Exception as exc:  # noqa: BLE001
-            QtWidgets.QMessageBox.critical(self, "Extraction Failed", str(exc))
-            return
-        if result.encrypted and not self._encrypted_checkbox.isChecked():
-            QtWidgets.QMessageBox.warning(self, "Encrypted", "Payload was encrypted. Enable checkbox and retry.")
-            return
-        try:
-            text = result.payload.decode("utf-8")
-        except UnicodeDecodeError:
-            text = "<binary payload>"
-        self._output_edit.setPlainText(text)
-        QtWidgets.QMessageBox.information(self, "Success", "Payload extracted successfully.")
 
-    def _save_text(self) -> None:
-        text = self._output_edit.toPlainText()
-        if not text:
-            QtWidgets.QMessageBox.warning(self, "No Text", "Nothing to save.")
-            return
-        file_dialog = QtWidgets.QFileDialog(self)
-        file_dialog.setAcceptMode(QtWidgets.QFileDialog.AcceptMode.AcceptSave)
-        file_dialog.setDefaultSuffix("txt")
-        file_dialog.setNameFilter("Text Files (*.txt)")
-        if file_dialog.exec() == QtWidgets.QDialog.DialogCode.Accepted:
-            path = file_dialog.selectedFiles()[0]
-            try:
-                Path(path).write_text(text, encoding="utf-8")
-            except Exception as exc:  # noqa: BLE001
-                QtWidgets.QMessageBox.critical(self, "Save Error", str(exc))
-                return
-            QtWidgets.QMessageBox.information(self, "Saved", "Payload written to disk.")
+        self.status_label.setText("Running extraction…")
+        self.extract_button.setEnabled(False)
 
-    def _show_preview(self, array: np.ndarray) -> None:
-        height, width, _ = array.shape
-        image = QtGui.QImage(array.data, width, height, width * 3, QtGui.QImage.Format.Format_RGB888)
-        pixmap = QtGui.QPixmap.fromImage(image.copy())
-        self._preview_label.setPixmap(pixmap.scaled(
-            self._preview_label.size(),
-            QtCore.Qt.AspectRatioMode.KeepAspectRatio,
-            QtCore.Qt.TransformationMode.SmoothTransformation,
-        ))
+        try:
+            result = extract_payload(
+                stego_image=self.stego_image,
+                seed=seed,
+                encrypted=self.encrypted_checkbox.isChecked(),
+            )
+        except Exception as exc:  # pragma: no cover - UI feedback path
+            self.extract_button.setEnabled(True)
+            self.status_label.setText("Extraction failed")
+            QMessageBox.critical(self, "Extraction Error", str(exc))
+            return
+
+        self.extract_button.setEnabled(True)
+        self.extracted_text = result.payload
+        self.payload_view.setPlainText(result.payload)
+        self.status_label.setText(
+            f"Recovered payload with {result.bits_read} bits read in total."
+        )
+
+    def _on_save_text(self) -> None:
+        if not self.extracted_text:
+            QMessageBox.information(self, "Nothing to Save", "Run extraction to obtain payload text first.")
+            return
+
+        file_path, _ = QFileDialog.getSaveFileName(
+            self,
+            "Save Payload Text",
+            "payload.txt",
+            "Text Files (*.txt)",
+        )
+        if not file_path:
+            return
+
+        try:
+            Path(file_path).write_text(self.extracted_text, encoding="utf-8")
+        except OSError as exc:
+            QMessageBox.critical(self, "Save Error", f"Failed to write file: {exc}")
+            return
+
+        QMessageBox.information(self, "Payload Saved", f"Payload saved to {file_path}")
+
+    # ------------------------------------------------------------- Utilities --
+    def _update_preview(self, image: np.ndarray) -> None:
+        h, w, _ = image.shape
+        buffer = np.ascontiguousarray(image)
+        qimage = QImage(buffer.data, w, h, QImage.Format.Format_RGB888)
+        pixmap = QPixmap.fromImage(qimage.copy()).scaled(
+            400,
+            400,
+            Qt.AspectRatioMode.KeepAspectRatio,
+            Qt.TransformationMode.SmoothTransformation,
+        )
+        self.stego_label.setPixmap(pixmap)

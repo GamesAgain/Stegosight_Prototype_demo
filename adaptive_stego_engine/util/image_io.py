@@ -1,4 +1,4 @@
-"""Image loading/saving helpers built on top of Pillow."""
+"""PNG IO utilities for 24-bit RGB images."""
 from __future__ import annotations
 
 from pathlib import Path
@@ -8,38 +8,30 @@ import numpy as np
 from PIL import Image
 
 
-class InvalidImageFormatError(RuntimeError):
-    """Raised when a supplied image does not meet the PNG requirement."""
+PNG_MODE = "RGB"
 
 
-PNG_MODES = {"RGB", "RGBA"}
-
-
-def load_png(path: str | Path) -> Tuple[np.ndarray, str]:
-    """Load a PNG image and return an ``np.uint8`` array and mode string."""
-    path = Path(path)
+def load_png(path: Path) -> np.ndarray:
+    """Load a 24-bit PNG image as a NumPy array."""
     with Image.open(path) as img:
         if img.format != "PNG":
-            raise InvalidImageFormatError("Only 24/32-bit PNG images are supported")
-        if img.mode not in PNG_MODES:
-            img = img.convert("RGB")
-        mode = img.mode
+            raise ValueError("Only PNG images are supported")
+        if img.mode != PNG_MODE:
+            raise ValueError("PNG must be 24-bit RGB (no alpha channel)")
         array = np.array(img, dtype=np.uint8)
-    if array.ndim == 2:
-        array = np.stack([array] * 3, axis=-1)
-        mode = "RGB"
-    if array.shape[2] == 4:
-        array = array[:, :, :3]
-        mode = "RGB"
-    return array, mode
+    return array
 
 
-def save_png(path: str | Path, array: np.ndarray, mode: str = "RGB") -> None:
-    """Save ``array`` as a PNG image preserving the provided ``mode``."""
-    path = Path(path)
-    image = Image.fromarray(array.astype(np.uint8), mode=mode)
+def save_png(path: Path, array: np.ndarray) -> None:
+    """Save an RGB NumPy array as a PNG file."""
+    if array.ndim != 3 or array.shape[2] != 3:
+        raise ValueError("Expected RGB array with shape (H, W, 3)")
+    image = Image.fromarray(array.astype(np.uint8), mode=PNG_MODE)
     image.save(path, format="PNG")
 
 
-def to_uint8(array: np.ndarray) -> np.ndarray:
-    return np.clip(np.rint(array), 0, 255).astype(np.uint8)
+def image_dimensions(array: np.ndarray) -> Tuple[int, int]:
+    """Return (height, width) for the image array."""
+    if array.ndim != 3 or array.shape[2] != 3:
+        raise ValueError("Invalid RGB image dimensions")
+    return array.shape[0], array.shape[1]

@@ -1,51 +1,83 @@
-"""High-level extraction controller."""
+"""High level extraction controller to recover payloads."""
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import Dict, List, Tuple
 
 import numpy as np
 
-from ..util.header import EncryptedPackage, decrypt_payload, validate_header
-from .bit_reader import BitReader
-from .extraction import extract_bits
+from ..analyzer.region_classifier import classify
+from ..analyzer.texture_map import compute_surface_score
+from ..embedder.embed_controller import _simulate_block_capacity
+from ..util import header
+from . import bit_reader, extraction
 
 
 @dataclass
 class ExtractionResult:
-    payload: bytes
-    encrypted: bool
-    mode: str | None
+    payload: str
+    bits_read: int
 
 
-class AdaptiveExtractor:
-    def __init__(self, seed: str, password: str | None = None) -> None:
-        self.seed = seed
-        self.password = password or ""
+def extract_payload(
+    stego_image: np.ndarray,
+    seed: str,
+    encrypted: bool,
+) -> ExtractionResult:
+    if stego_image.ndim != 3 or stego_image.shape[2] != 3:
+        raise ValueError("Stego image must be an RGB array")
 
-    def extract(self, image: np.ndarray) -> ExtractionResult:
-        bits = extract_bits(image, self.seed)
-        reader = BitReader(bits)
-        flag = reader.read_bytes(1)
-        if not flag:
-            raise ValueError("Failed to read encryption flag")
-        encrypted = flag[0] == 1
-        if not encrypted:
-            header_bytes = reader.read_bytes(9)
-            payload_length = validate_header(header_bytes)
-            payload_bytes = reader.read_bytes(payload_length)
-            return ExtractionResult(payload=payload_bytes, encrypted=False, mode=None)
+    stego = np.ascontiguousarray(stego_image, dtype=np.uint8)
 
-        package_length_bytes = reader.read_bytes(4)
-        package_length = int.from_bytes(package_length_bytes, "big")
-        if package_length <= 0:
-            raise ValueError("Invalid encrypted payload length")
-        package_bytes = reader.read_bytes(package_length)
-        package = EncryptedPackage.decode(package_bytes)
+    _gradient_map, entropy_map, surface_map = compute_surface_score(stego)
+    classification = classify(surface_map)
+
+    from ..embedder import capacity as capacity_module, noise_predictor, pixel_order as order_module
+
+    base_capacity = capacity_module.compute_capacity_map(classification, surface_map)
+    adjusted_capacity = noise_predictor.adjust_capacity(stego, base_capacity)
+
+    order = order_module.compute_pixel_order(entropy_map, seed)
+
+    block_map: Dict[Tuple[int, int], List[Tuple[int, int]]] = {}
+    block_sequence: List[Tuple[int, int]] = []
+    block_size = 8
+    for coord in order:
+        by = (coord[0] // block_size) * block_size
+        bx = (coord[1] // block_size) * block_size
+        key = (by, bx)
+        if key not in block_map:
+            block_map[key] = []
+            block_sequence.append(key)
+        block_map[key].append(coord)
+
+    base_simulation = stego & 0xFE
+    for by, bx in block_sequence:
+        _simulate_block_capacity(base_simulation, adjusted_capacity, block_map[(by, bx)], by, bx, seed, block_size)
+
+    bits = bit_reader.extract_bits(stego, order, adjusted_capacity)
+
+    if encrypted:
+        total_bits, encrypted_header = extraction.parse_encrypted(bits)
+        decrypted = header.decrypt_header(seed, encrypted_header)
+        header_bytes = decrypted[: header.HEADER_LEN]
+        payload_length = header.validate_header(header_bytes)
+        if len(decrypted) < header.HEADER_LEN + payload_length:
+            raise ValueError("Encrypted payload truncated; integrity check failed")
+        payload_bytes = decrypted[header.HEADER_LEN : header.HEADER_LEN + payload_length]
         try:
-            plaintext = decrypt_payload(package, self.password)
-        except Exception as exc:  # noqa: BLE001
-            raise ValueError("Decryption failed. Check password and mode.") from exc
-        header = plaintext[:9]
-        payload_length = validate_header(header)
-        payload = plaintext[9:9 + payload_length]
-        return ExtractionResult(payload=payload, encrypted=True, mode=package.mode)
+            payload_text = payload_bytes.decode("utf-8")
+        except UnicodeDecodeError as exc:
+            raise ValueError("Failed to decode payload; check password") from exc
+        bits_read = total_bits
+    else:
+        header_bytes, payload_bytes = extraction.parse_plain(bits)
+        payload_length = header.validate_header(header_bytes)
+        payload_bytes = payload_bytes[:payload_length]
+        try:
+            payload_text = payload_bytes.decode("utf-8")
+        except UnicodeDecodeError as exc:
+            raise ValueError("Payload is not valid UTF-8") from exc
+        bits_read = (header.HEADER_LEN + payload_length) * 8
+
+    return ExtractionResult(payload=payload_text, bits_read=bits_read)

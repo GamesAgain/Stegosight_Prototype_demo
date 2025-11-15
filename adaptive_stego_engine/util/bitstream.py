@@ -1,50 +1,44 @@
-"""Bitstream utilities for converting between bytes and bit-level representations."""
+"""Bitstream helpers for LSB embedding."""
 from __future__ import annotations
 
-from typing import Iterable, List
+from typing import Iterable, List, Sequence
 
 
 def bytes_to_bits(data: bytes) -> List[int]:
-    """Convert a byte string to a list of bits (MSB first for each byte)."""
+    """Expand bytes into a list of bits (MSB first)."""
     bits: List[int] = []
     for byte in data:
-        bits.extend((byte >> shift) & 1 for shift in range(7, -1, -1))
+        for shift in range(7, -1, -1):
+            bits.append((byte >> shift) & 1)
     return bits
 
 
-def bits_to_bytes(bits: Iterable[int]) -> bytes:
-    """Convert an iterable of bits (MSB first) into bytes."""
-    output = bytearray()
-    current = 0
-    count = 0
-    for bit in bits:
-        current = (current << 1) | (bit & 1)
-        count += 1
-        if count == 8:
-            output.append(current)
-            current = 0
-            count = 0
-    if count:
-        current <<= 8 - count
-        output.append(current)
-    return bytes(output)
+def bits_to_bytes(bits: Sequence[int]) -> bytes:
+    """Pack a bit sequence into bytes (MSB first)."""
+    if not bits:
+        return b""
+    padded = list(bits)
+    while len(padded) % 8:
+        padded.append(0)
+
+    out = bytearray()
+    for idx in range(0, len(padded), 8):
+        byte = 0
+        for shift, bit in enumerate(padded[idx : idx + 8]):
+            byte |= (int(bit) & 1) << (7 - shift)
+        out.append(byte)
+    return bytes(out)
 
 
-def pack_bitstream(bit_segments: Iterable[Iterable[int]]) -> List[int]:
-    """Concatenate multiple bit iterables into a single list."""
-    packed: List[int] = []
-    for segment in bit_segments:
-        packed.extend(int(bit) & 1 for bit in segment)
-    return packed
+def pack_bitstream(segments: Sequence[bytes]) -> List[int]:
+    """Convert multiple byte segments into a single bit list."""
+    bits: List[int] = []
+    for segment in segments:
+        bits.extend(bytes_to_bits(segment))
+    return bits
 
 
-def unpack_bitstream(bits: Iterable[int], count: int) -> List[int]:
-    """Return the first *count* bits from the iterable as a list."""
-    extracted: List[int] = []
-    for idx, bit in enumerate(bits):
-        if idx >= count:
-            break
-        extracted.append(int(bit) & 1)
-    if len(extracted) < count:
-        raise ValueError("Insufficient bits available in stream")
-    return extracted
+def unpack_bitstream(bits: Sequence[int], length_bytes: int) -> bytes:
+    """Convert a subset of bits back into bytes."""
+    relevant = bits[: length_bytes * 8]
+    return bits_to_bytes(relevant)
