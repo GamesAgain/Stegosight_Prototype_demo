@@ -1,27 +1,28 @@
-"""Entry point launching the PyQt6 GUI."""
+"""Entry point for the Adaptive Steganography Engine v2.0.0 GUI."""
 from __future__ import annotations
 
+import os
 import sys
 from pathlib import Path
 
-from PyQt6 import QtWidgets
+from PyQt6.QtWidgets import QApplication
 
-if __package__ in (None, ""):
-    # When executed as a top-level script (``python adaptive_stego_engine/main.py``)
-    # the relative imports fail. Ensure the project root is available on ``sys.path``
-    # so that absolute imports resolve correctly.
-    project_root = Path(__file__).resolve().parent.parent
-    if str(project_root) not in sys.path:
-        sys.path.insert(0, str(project_root))
-    from adaptive_stego_engine.gui.main_window import MainWindow
-else:
-    from .gui.main_window import MainWindow
+from .gui.main_window import MainWindow
 
 
 def main() -> None:
-    app = QtWidgets.QApplication(sys.argv)
+    """Launch the PyQt6 GUI application."""
+    app = QApplication(sys.argv)
+    app.setApplicationName("Adaptive Steganography Engine v2.0.0")
+
     window = MainWindow()
+    window.resize(1100, 720)
     window.show()
+
+    if getattr(sys, "frozen", False):  # pragma: no cover - defensive guard
+        # When bundled, ensure working directory is project root for IO dialogs.
+        os.chdir(Path(sys.executable).resolve().parent)
+
     sys.exit(app.exec())
 
 

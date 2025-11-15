@@ -1,31 +1,29 @@
-"""Bit level helper for extraction pipeline."""
+"""Read embedded bitstreams from stego images."""
 from __future__ import annotations
 
-from typing import Iterable, List
+from typing import List, Sequence, Tuple
+
+import numpy as np
 
 
-class BitReader:
-    def __init__(self, bits: Iterable[int]):
-        self._bits: List[int] = list(bits)
-        self._index = 0
+PixelIndex = Tuple[int, int]
 
-    def read_bits(self, count: int) -> List[int]:
-        if self._index + count > len(self._bits):
-            raise ValueError("Not enough bits in stream")
-        data = self._bits[self._index:self._index + count]
-        self._index += count
-        return data
 
-    def read_bytes(self, count: int) -> bytes:
-        bits = self.read_bits(count * 8)
-        value = 0
-        out = bytearray()
-        for idx, bit in enumerate(bits):
-            value = (value << 1) | (bit & 1)
-            if (idx + 1) % 8 == 0:
-                out.append(value)
-                value = 0
-        return bytes(out)
-
-    def remaining_bits(self) -> int:
-        return len(self._bits) - self._index
+def extract_bits(
+    image: np.ndarray,
+    pixel_indices: Sequence[PixelIndex],
+    capacities: np.ndarray,
+    max_bits: int | None = None,
+) -> List[int]:
+    """Extract bits following the provided pixel order."""
+    bits: List[int] = []
+    for y, x in pixel_indices:
+        cap = int(capacities[y, x])
+        if cap <= 0:
+            continue
+        pixel = image[y, x]
+        for channel in range(cap):
+            bits.append(int(pixel[channel] & 1))
+            if max_bits is not None and len(bits) >= max_bits:
+                return bits
+    return bits

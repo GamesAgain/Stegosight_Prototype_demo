@@ -1,28 +1,41 @@
 # Adaptive Steganography Engine v2.0.0
 
-Adaptive Steganography Engine v2.0.0 is a production-grade Python 3.12 application that combines a hardened, texture-aware steganographic core with a desktop GUI built on PyQt6. The system operates exclusively on 24-bit PNG cover images, supports optional Argon2id/AES-based encryption, and enforces PSNR/SSIM quality thresholds during embedding to minimise detectability.
+Adaptive Steganography Engine v2.0.0 is a production-ready Python 3.12 project delivering a
+state-of-the-art, texture-aware steganography workflow with optional AES-GCM encryption and a
+full PyQt6 GUI. The system supports adaptive, capacity-optimised embedding in 24-bit PNG covers
+and guarantees precise payload recovery through a deterministic reverse pipeline.
 
-## Features
+## Key Features
 
-- **PNG-only cover enforcement** – rejects lossy formats to preserve LSB integrity.
-- **Adaptive capacity planning** – Sobel gradient, local entropy, and drift controls determine per-pixel bit budgets (0–3 bits).
-- **Predictive noise correction** – dynamically reduces capacity near smooth regions.
-- **Deterministic PRNG ordering** – entropy-ranked pixels shuffled with a seed-derived PRNG for repeatable embedding/extraction.
-- **Quality assurance** – PSNR ≥ 48 dB and SSIM ≥ 0.985 enforced after embedding.
-- **Hardened headers** – plaintext header `STEGO + length` with optional full payload encryption (AES-GCM or AES-CTR + HMAC) using Argon2id-derived keys and per-payload salts.
-- **GUI workflow** – intuitive tabs for embedding and extraction, live metrics, and support for direct text entry or `.txt` payloads.
+- **Cover compliance** – accepts only 24-bit PNG images and preserves original dimensions.
+- **Payload support** – embeds UTF-8 text from direct input or `.txt` files.
+- **WARPLAN STEG2 hardening** – plaintext header (`STEGO` + payload length) or fully encrypted
+  header/payload bundle with PBKDF2-HMAC-SHA256 derived keys and AES-GCM.
+- **Adaptive analysis** – Sobel gradients and local entropy build a composite surface score used to
+  classify regions into Smooth, Texture, and Edge zones with tiered bit capacities.
+- **Predictive noise correction** – neighbourhood-aware capacity reduction prevents artifacts in
+  smooth areas.
+- **Drift-aware planning** – statistical simulations on 8×8 blocks downgrade risky regions before
+  embedding, ensuring PSNR ≥ 48 dB and SSIM ≥ 0.985.
+- **Deterministic embedding order** – pixels sorted by entropy and shuffled with a seed-controlled
+  PRNG ensure reproducible placement during extraction.
+- **Quality metrics** – PSNR, SSIM, and histogram drift calculated after embedding.
+- **Full reverse pipeline** – extraction recomputes the adaptive capacity map, rebuilds the PRNG
+  ordering, decrypts headers/payloads when required, and outputs UTF-8 text.
+- **Modern GUI** – dual-tab PyQt6 interface for embedding and extraction with live previews,
+  encryption toggles, and save options.
 
-## Project Structure
+## Project Layout
 
 ```
 adaptive_stego_engine/
 ├── main.py
 ├── README.md
 ├── analyzer/
-│   ├── gradient.py
 │   ├── entropy.py
-│   ├── texture_map.py
-│   └── region_classifier.py
+│   ├── gradient.py
+│   ├── region_classifier.py
+│   └── texture_map.py
 ├── embedder/
 │   ├── capacity.py
 │   ├── drift_control.py
@@ -36,11 +49,9 @@ adaptive_stego_engine/
 │   └── extraction.py
 ├── gui/
 │   ├── __init__.py
-│   ├── assets/theme.qss
 │   ├── embed_tab.py
 │   ├── extract_tab.py
-│   ├── main_window.py
-│   └── resources.py
+│   └── main_window.py
 └── util/
     ├── bitstream.py
     ├── crypto.py
@@ -52,23 +63,13 @@ adaptive_stego_engine/
 
 ## Installation
 
-1. **Create a Python 3.12 environment** (conda, venv, or your tool of choice).
-2. **Install dependencies**:
-   ```bash
-   pip install -r requirements.txt
-   ```
-   Required packages:
-   - `numpy`
-   - `pillow`
-   - `scipy`
-   - `cryptography`
-   - `argon2-cffi`
-   - `tqdm`
-   - `PyQt6`
+Create a virtual environment (Python 3.12.0) and install dependencies:
 
-3. (Optional) Install `opencv-python` if you want to experiment with alternative gradient implementations.
-
-> **Note:** A `requirements.txt` file is not provided automatically; install the packages above manually or generate your own.
+```bash
+python3.12 -m venv .venv
+source .venv/bin/activate
+pip install -r requirements.txt
+```
 
 ## Running the GUI
 
@@ -78,50 +79,51 @@ python -m adaptive_stego_engine.main
 
 ### Embedding Workflow
 
-1. Load a 24-bit PNG cover image via **Select Cover PNG**.
-2. Type or import UTF-8 text into the payload editor.
-3. Enter a seed/password. This value drives the PRNG ordering and (when enabled) the Argon2id key derivation for encryption.
-4. Optionally enable **AES Encryption** and choose either **AES-GCM** or **AES-CTR + HMAC**.
-5. Click **Run Adaptive Embed** to embed the payload. PSNR/SSIM metrics appear if successful.
-6. Save the generated stego PNG.
+1. Open the **Embed** tab.
+2. Select a 24-bit PNG cover (other formats are rejected).
+3. Enter secret text or load a UTF-8 `.txt` file.
+4. Provide a seed/password used for PRNG ordering and optional encryption.
+5. Toggle **Enable AES Encryption** to encrypt both header and payload (salt and nonce stored
+   before ciphertext as per WARPLAN requirements).
+6. Click **Run Adaptive Embed**. Quality metrics (PSNR, SSIM) are displayed upon success.
+7. Save the stego PNG once satisfied.
 
 ### Extraction Workflow
 
-1. Load the stego PNG via **Select Stego PNG**.
-2. Enter the same seed/password used during embedding.
-3. If the payload was encrypted, tick **Payload is encrypted** before extraction.
-4. Click **Extract** to recover the payload, then optionally export it to a `.txt` file.
+1. Switch to the **Extract** tab and load the stego PNG.
+2. Provide the original seed/password.
+3. Tick **Payload is encrypted** if AES-GCM was used during embedding.
+4. Click **Extract Payload** to recover the UTF-8 message. Save to a text file if needed.
 
-## Core Algorithms
+## Command-Line Integration
 
-- **Texture analysis**: `analyzer/gradient.py` and `analyzer/entropy.py` produce gradient magnitudes and 5×5 local entropy scores. `texture_map.surface_map` combines them into a surface score driving region classification.
-- **Capacity planning**: `embedder/capacity.py` derives per-pixel bit budgets, corrected by `noise_predictor.predictor_penalty` and `drift_control.safe_capacity_mask` (8×8 statistical checks).
-- **Embedding**: `embedder/embed_controller.py` orders pixels by entropy, shuffles with a seed-driven PRNG, embeds multi-bit payloads, and validates PSNR/SSIM thresholds using `util.metrics`.
-- **Extraction**: `extractor/extraction.py` mirrors the analysis pipeline to read multi-bit payloads, while `extractor/extract_controller.py` parses headers, validates magic constants, and optionally decrypts ciphertext with Argon2id-derived AES keys.
+All heavy lifting resides in the controller modules:
 
-## Cryptography Details
+- `adaptive_stego_engine.embedder.embed_controller.embed_payload`
+- `adaptive_stego_engine.extractor.extract_controller.extract_payload`
 
-- **Header format**: `MAGIC ("STEGO") + payload length (uint32 big-endian)`.
-- **Hardened mode**: Generates a 16-byte random salt per payload, derives a 256-bit key with Argon2id, and encrypts header + payload using AES-GCM or AES-CTR + HMAC-SHA256. Salts, nonces, ciphertext, and authentication tags are serialized compactly before embedding.
-- **Validation**: Extraction re-derives keys, authenticates the ciphertext, and verifies the decrypted header magic before returning payload bytes.
+These functions operate directly on `numpy.ndarray` RGB images, enabling easy scripting or test
+automation outside of the GUI layer.
 
-## CLI/Automation
+## Security Notes
 
-While the GUI is the primary interface, the embedding/extraction controllers can be imported directly in Python for headless automation:
+- PBKDF2-HMAC-SHA256 with a randomly generated 16-byte salt derives AES-GCM keys.
+- The hardened mode encrypts header and payload, storing the salt, nonce, and tag ahead of the
+  ciphertext. Decryption validates the `STEGO` magic before releasing the payload.
+- Extraction raises descriptive errors on incorrect passwords or tampered data.
 
-```python
-from adaptive_stego_engine.embedder.embed_controller import AdaptiveEmbedder
-from adaptive_stego_engine.extractor.extract_controller import AdaptiveExtractor
+## Quality Guarantees
 
-embedder = AdaptiveEmbedder(seed="secret-seed", encrypt=True, password="secret-seed", mode="AES-GCM")
-result = embedder.embed(cover_array, payload_bytes)
+Every embedding run enforces:
 
-extractor = AdaptiveExtractor(seed="secret-seed", password="secret-seed")
-payload = extractor.extract(stego_array).payload
-```
+- PSNR ≥ 48 dB
+- SSIM ≥ 0.985
+- Histogram drift monitoring via adaptive block simulation prior to writing bits
 
-Ensure arrays are `numpy.uint8` RGB images loaded via `util.image_io.load_png` to maintain expected pre-processing.
+If the payload cannot be embedded without violating these constraints, the process aborts with a
+clear error message.
 
 ## License
 
-This project is provided as-is for educational and research purposes. Review and adjust cryptographic policies before deploying in production environments subject to local regulations.
+This prototype is provided for research and educational purposes. Ensure compliance with local laws
+and regulations when using steganography in your environment.

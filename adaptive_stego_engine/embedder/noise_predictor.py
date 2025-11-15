@@ -1,19 +1,33 @@
-"""Predictive noise control based on local neighbourhood statistics."""
+"""Predictive noise correction to adapt capacity per pixel."""
 from __future__ import annotations
 
 import numpy as np
 from scipy import ndimage
 
 
-def predictor_penalty(image: np.ndarray, threshold: float = 30.0) -> np.ndarray:
-    """Return per-pixel penalties (0-2) depending on predicted distortion."""
-    if image.ndim != 3 or image.shape[2] != 3:
-        raise ValueError("Expected RGB image for predictor penalty")
-    penalty = np.zeros(image.shape[:2], dtype=np.uint8)
-    for channel in range(3):
-        channel_data = image[:, :, channel].astype(np.float32)
-        neighbor_mean = ndimage.uniform_filter(channel_data, size=3, mode="reflect")
-        diff = np.abs(channel_data - neighbor_mean)
-        penalty = np.maximum(penalty, np.where(diff > threshold, 1, penalty))
-        penalty = np.maximum(penalty, np.where(diff > 2 * threshold, 2, penalty))
-    return penalty
+NEIGHBOR_KERNEL = np.array(
+    [
+        [1, 1, 1],
+        [1, 0, 1],
+        [1, 1, 1],
+    ],
+    dtype=np.float64,
+)
+
+
+def adjust_capacity(image: np.ndarray, capacity: np.ndarray) -> np.ndarray:
+    """Reduce capacity for pixels that deviate strongly from their neighborhood."""
+    grayscale = image.mean(axis=2).astype(np.float64)
+    neighbor_sum = ndimage.convolve(grayscale, NEIGHBOR_KERNEL, mode="reflect")
+    neighbor_mean = neighbor_sum / NEIGHBOR_KERNEL.sum()
+
+    deviation = np.abs(grayscale - neighbor_mean)
+    adjusted = capacity.astype(np.int16).copy()
+
+    adjusted[deviation > 60] = np.maximum(adjusted[deviation > 60] - 2, 0)
+    adjusted[(deviation > 30) & (deviation <= 60)] = np.maximum(
+        adjusted[(deviation > 30) & (deviation <= 60)] - 1,
+        0,
+    )
+
+    return adjusted.astype(np.uint8)

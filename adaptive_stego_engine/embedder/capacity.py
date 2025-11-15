@@ -1,18 +1,21 @@
-"""Capacity planning for each pixel based on texture scores and predictors."""
+"""Capacity planning utilities."""
 from __future__ import annotations
 
 import numpy as np
 
-from ..analyzer.region_classifier import classify, capacity_map
+from ..analyzer.region_classifier import EDGE, SMOOTH, TEXTURE
 
 
-def pixel_capacity(surface_scores: np.ndarray, predictor_adjustment: np.ndarray | None = None) -> np.ndarray:
-    classes = classify(surface_scores)
-    capacity = capacity_map(classes).astype(np.int16)
-    if predictor_adjustment is not None:
-        capacity = np.maximum(0, capacity - predictor_adjustment.astype(np.int16))
-    return capacity.astype(np.uint8)
+def compute_capacity_map(classification: np.ndarray, surface: np.ndarray) -> np.ndarray:
+    """Translate region classification into per-pixel bit capacity."""
+    capacity = np.zeros_like(surface, dtype=np.uint8)
 
+    smooth_mask = classification == SMOOTH
+    texture_mask = classification == TEXTURE
+    edge_mask = classification == EDGE
 
-def capacity_to_bit_total(capacity: np.ndarray) -> int:
-    return int(np.sum(capacity))
+    capacity[smooth_mask & (surface > 0.12)] = 1
+    capacity[texture_mask] = 2
+    capacity[edge_mask] = 3
+
+    return capacity

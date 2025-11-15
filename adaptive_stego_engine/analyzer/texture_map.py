@@ -1,15 +1,16 @@
-"""Combine gradient and entropy into a surface score map."""
+"""Combine gradient and entropy into an adaptive texture map."""
 from __future__ import annotations
 
 import numpy as np
 
-from .gradient import sobel_magnitude
-from .entropy import local_entropy
+from .gradient import normalized_gradient
+from .entropy import normalized_entropy
 
 
-def surface_map(image: np.ndarray) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
-    grad = sobel_magnitude(image)
-    entropy = local_entropy(image)
-    surface = 0.6 * grad + 0.4 * entropy
+def compute_surface_score(image: np.ndarray) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """Return normalized gradient, entropy and combined surface score."""
+    grad = normalized_gradient(image)
+    ent = normalized_entropy(image)
+    surface = 0.6 * grad + 0.4 * ent
     surface = np.clip(surface, 0.0, 1.0)
-    return surface.astype(np.float32), grad.astype(np.float32), entropy.astype(np.float32)
+    return grad, ent, surface

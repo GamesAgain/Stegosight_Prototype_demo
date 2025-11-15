@@ -1,159 +1,220 @@
-"""Embed tab implementation for the Adaptive Steganography Engine GUI."""
+"""Embedding tab implementation."""
 from __future__ import annotations
 
 from pathlib import Path
 from typing import Optional
 
 import numpy as np
-from PyQt6 import QtCore, QtGui, QtWidgets
+from PyQt6.QtCore import Qt
+from PyQt6.QtGui import QImage, QPixmap
+from PyQt6.QtWidgets import (
+    QCheckBox,
+    QFileDialog,
+    QGridLayout,
+    QGroupBox,
+    QLabel,
+    QLineEdit,
+    QMessageBox,
+    QPushButton,
+    QPlainTextEdit,
+    QVBoxLayout,
+    QWidget,
+)
 
-from ..embedder.embed_controller import AdaptiveEmbedder
-from ..util.image_io import InvalidImageFormatError, load_png, save_png
+from ..embedder.embed_controller import EmbeddingResult, embed_payload
+from ..util import image_io
 
 
-class EmbedTab(QtWidgets.QWidget):
-    def __init__(self, parent: Optional[QtWidgets.QWidget] = None) -> None:
+class EmbedTab(QWidget):
+    """Tab widget orchestrating the adaptive embedding workflow."""
+
+    def __init__(self, parent: Optional[QWidget] = None) -> None:
         super().__init__(parent)
-        self._cover_array: Optional[np.ndarray] = None
-        self._cover_mode: str = "RGB"
-        self._stego_result: Optional[np.ndarray] = None
-        self._seed_input = QtWidgets.QLineEdit()
-        self._encryption_checkbox = QtWidgets.QCheckBox("Enable AES Encryption")
-        self._mode_combo = QtWidgets.QComboBox()
-        self._payload_edit = QtWidgets.QPlainTextEdit()
-        self._psnr_label = QtWidgets.QLabel("PSNR: --")
-        self._ssim_label = QtWidgets.QLabel("SSIM: --")
-        self._preview_label = QtWidgets.QLabel()
-        self._setup_ui()
+        self.cover_path: Optional[Path] = None
+        self.cover_image: Optional[np.ndarray] = None
+        self.embed_result: Optional[EmbeddingResult] = None
 
-    def _setup_ui(self) -> None:
-        layout = QtWidgets.QVBoxLayout(self)
+        self._build_ui()
 
-        file_layout = QtWidgets.QHBoxLayout()
-        select_button = QtWidgets.QPushButton("Select Cover PNG")
-        select_button.clicked.connect(self._select_cover)
-        file_layout.addWidget(select_button)
-        load_txt_button = QtWidgets.QPushButton("Load .txt")
-        load_txt_button.clicked.connect(self._load_text_file)
-        file_layout.addWidget(load_txt_button)
-        layout.addLayout(file_layout)
+    # ------------------------------------------------------------------ UI --
+    def _build_ui(self) -> None:
+        layout = QVBoxLayout(self)
 
-        self._preview_label.setFixedHeight(200)
-        self._preview_label.setAlignment(QtCore.Qt.AlignmentFlag.AlignCenter)
-        self._preview_label.setStyleSheet("border: 1px solid #666;")
-        layout.addWidget(self._preview_label)
+        cover_group = QGroupBox("Cover Image")
+        cover_layout = QGridLayout(cover_group)
 
-        layout.addWidget(QtWidgets.QLabel("Secret Text (UTF-8):"))
-        self._payload_edit.setPlaceholderText("Type or load secret text...")
-        layout.addWidget(self._payload_edit)
+        self.cover_label = QLabel("No cover selected")
+        self.cover_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.cover_label.setMinimumHeight(220)
+        self.cover_label.setStyleSheet("border: 1px solid #444; background: #111;")
 
-        form = QtWidgets.QFormLayout()
-        self._seed_input.setPlaceholderText("Seed / Password")
-        form.addRow("Seed / Password:", self._seed_input)
+        select_cover_btn = QPushButton("Select Cover PNG")
+        select_cover_btn.clicked.connect(self._on_select_cover)
 
-        self._encryption_checkbox.stateChanged.connect(self._toggle_mode_combo)
-        form.addRow(self._encryption_checkbox)
+        cover_layout.addWidget(self.cover_label, 0, 0, 1, 2)
+        cover_layout.addWidget(select_cover_btn, 1, 0, 1, 2)
 
-        self._mode_combo.addItems(["AES-GCM", "AES-CTR + HMAC"])
-        self._mode_combo.setEnabled(False)
-        form.addRow("Mode:", self._mode_combo)
-        layout.addLayout(form)
+        payload_group = QGroupBox("Secret Payload")
+        payload_layout = QGridLayout(payload_group)
 
-        run_button = QtWidgets.QPushButton("Run Adaptive Embed")
-        run_button.clicked.connect(self._run_embed)
-        layout.addWidget(run_button)
+        self.payload_edit = QPlainTextEdit()
+        self.payload_edit.setPlaceholderText("Enter secret text here or load a UTF-8 .txt file")
 
-        metrics_layout = QtWidgets.QHBoxLayout()
-        metrics_layout.addWidget(self._psnr_label)
-        metrics_layout.addWidget(self._ssim_label)
-        layout.addLayout(metrics_layout)
+        load_txt_btn = QPushButton("Load .txt File")
+        load_txt_btn.clicked.connect(self._on_load_text)
 
-        save_button = QtWidgets.QPushButton("Save Stego")
-        save_button.clicked.connect(self._save_stego)
-        layout.addWidget(save_button)
+        payload_layout.addWidget(self.payload_edit, 0, 0, 1, 2)
+        payload_layout.addWidget(load_txt_btn, 1, 1)
 
-        layout.addStretch()
+        controls_group = QGroupBox("Embedding Settings")
+        controls_layout = QGridLayout(controls_group)
 
-    def _toggle_mode_combo(self, state: int) -> None:
-        self._mode_combo.setEnabled(state == QtCore.Qt.CheckState.Checked.value)
+        self.seed_input = QLineEdit()
+        self.seed_input.setPlaceholderText("Seed / Password")
+        self.seed_input.setEchoMode(QLineEdit.EchoMode.Password)
 
-    def _select_cover(self) -> None:
-        file_dialog = QtWidgets.QFileDialog(self)
-        file_dialog.setNameFilter("PNG Images (*.png)")
-        if file_dialog.exec() == QtWidgets.QDialog.DialogCode.Accepted:
-            path = file_dialog.selectedFiles()[0]
-            try:
-                array, mode = load_png(path)
-            except InvalidImageFormatError as exc:
-                QtWidgets.QMessageBox.critical(self, "Invalid Image", str(exc))
-                return
-            self._cover_array = array
-            self._cover_mode = mode
-            self._stego_result = None
-            self._show_preview(array)
+        self.aes_checkbox = QCheckBox("Enable AES Encryption")
+        self.aes_checkbox.setChecked(True)
 
-    def _load_text_file(self) -> None:
-        file_dialog = QtWidgets.QFileDialog(self)
-        file_dialog.setNameFilter("Text Files (*.txt)")
-        if file_dialog.exec() == QtWidgets.QDialog.DialogCode.Accepted:
-            path = file_dialog.selectedFiles()[0]
-            try:
-                text = Path(path).read_text(encoding="utf-8")
-            except Exception as exc:  # noqa: BLE001
-                QtWidgets.QMessageBox.critical(self, "File Error", str(exc))
-                return
-            self._payload_edit.setPlainText(text)
+        self.run_button = QPushButton("Run Adaptive Embed")
+        self.run_button.clicked.connect(self._on_run_embed)
 
-    def _run_embed(self) -> None:
-        if self._cover_array is None:
-            QtWidgets.QMessageBox.warning(self, "No Cover", "Please load a cover PNG image first.")
+        self.save_button = QPushButton("Save Stego Image")
+        self.save_button.clicked.connect(self._on_save_stego)
+        self.save_button.setEnabled(False)
+
+        self.status_label = QLabel("Idle")
+        self.status_label.setWordWrap(True)
+
+        controls_layout.addWidget(QLabel("Seed / Password:"), 0, 0)
+        controls_layout.addWidget(self.seed_input, 0, 1)
+        controls_layout.addWidget(self.aes_checkbox, 1, 0, 1, 2)
+        controls_layout.addWidget(self.run_button, 2, 0, 1, 2)
+        controls_layout.addWidget(self.save_button, 3, 0, 1, 2)
+        controls_layout.addWidget(self.status_label, 4, 0, 1, 2)
+
+        layout.addWidget(cover_group)
+        layout.addWidget(payload_group)
+        layout.addWidget(controls_group)
+        layout.addStretch(1)
+
+    # -------------------------------------------------------------- Handlers --
+    def _on_select_cover(self) -> None:
+        file_path, _ = QFileDialog.getOpenFileName(
+            self,
+            "Select Cover PNG",
+            "",
+            "PNG Images (*.png)",
+        )
+        if not file_path:
             return
-        payload_text = self._payload_edit.toPlainText()
-        if not payload_text:
-            QtWidgets.QMessageBox.warning(self, "No Payload", "Secret text cannot be empty.")
-            return
-        seed = self._seed_input.text().strip()
-        if not seed:
-            QtWidgets.QMessageBox.warning(self, "Missing Seed", "A seed/password is required.")
-            return
-        payload_bytes = payload_text.encode("utf-8")
-        encrypt = self._encryption_checkbox.isChecked()
-        mode = self._mode_combo.currentText()
+
         try:
-            embedder = AdaptiveEmbedder(seed=seed, encrypt=encrypt, password=seed, mode=mode)
-            result = embedder.embed(self._cover_array, payload_bytes)
-        except Exception as exc:  # noqa: BLE001
-            QtWidgets.QMessageBox.critical(self, "Embedding Failed", str(exc))
+            image = image_io.load_png(Path(file_path))
+        except ValueError as exc:
+            QMessageBox.warning(self, "Invalid Cover", str(exc))
             return
-        self._stego_result = result.stego_image
-        self._psnr_label.setText(f"PSNR: {result.psnr_value:.2f} dB")
-        self._ssim_label.setText(f"SSIM: {result.ssim_value:.4f}")
-        self._show_preview(result.stego_image)
-        QtWidgets.QMessageBox.information(self, "Success", "Payload embedded successfully.")
 
-    def _save_stego(self) -> None:
-        if self._stego_result is None:
-            QtWidgets.QMessageBox.warning(self, "No Stego", "Run embedding before saving.")
+        self.cover_path = Path(file_path)
+        self.cover_image = image
+        self.embed_result = None
+        self.save_button.setEnabled(False)
+        self._update_preview(image)
+        self.status_label.setText(
+            f"Loaded cover: {self.cover_path.name} ({image.shape[1]}x{image.shape[0]})"
+        )
+
+    def _on_load_text(self) -> None:
+        file_path, _ = QFileDialog.getOpenFileName(
+            self,
+            "Load UTF-8 Text File",
+            "",
+            "Text Files (*.txt)",
+        )
+        if not file_path:
             return
-        file_dialog = QtWidgets.QFileDialog(self)
-        file_dialog.setAcceptMode(QtWidgets.QFileDialog.AcceptMode.AcceptSave)
-        file_dialog.setNameFilter("PNG Images (*.png)")
-        file_dialog.setDefaultSuffix("png")
-        if file_dialog.exec() == QtWidgets.QDialog.DialogCode.Accepted:
-            path = file_dialog.selectedFiles()[0]
-            try:
-                save_png(path, self._stego_result, mode=self._cover_mode)
-            except Exception as exc:  # noqa: BLE001
-                QtWidgets.QMessageBox.critical(self, "Save Error", str(exc))
-                return
-            QtWidgets.QMessageBox.information(self, "Saved", "Stego image saved successfully.")
 
-    def _show_preview(self, array: np.ndarray) -> None:
-        height, width, _ = array.shape
-        image = QtGui.QImage(array.data, width, height, width * 3, QtGui.QImage.Format.Format_RGB888)
-        pixmap = QtGui.QPixmap.fromImage(image.copy())
-        self._preview_label.setPixmap(pixmap.scaled(
-            self._preview_label.size(),
-            QtCore.Qt.AspectRatioMode.KeepAspectRatio,
-            QtCore.Qt.TransformationMode.SmoothTransformation,
-        ))
+        try:
+            text = Path(file_path).read_text(encoding="utf-8")
+        except OSError as exc:
+            QMessageBox.critical(self, "Read Error", f"Failed to load file: {exc}")
+            return
+
+        self.payload_edit.setPlainText(text)
+        self.status_label.setText(f"Loaded payload from {Path(file_path).name}")
+
+    def _on_run_embed(self) -> None:
+        if self.cover_image is None:
+            QMessageBox.warning(self, "Missing Cover", "Please select a valid PNG cover image first.")
+            return
+
+        payload_text = self.payload_edit.toPlainText()
+        if not payload_text:
+            QMessageBox.warning(self, "Empty Payload", "Enter secret text or load a .txt file before embedding.")
+            return
+
+        seed = self.seed_input.text().strip()
+        if not seed:
+            QMessageBox.warning(self, "Missing Seed", "Provide a deterministic seed/password.")
+            return
+
+        self.status_label.setText("Running adaptive embedding…")
+        self.run_button.setEnabled(False)
+
+        try:
+            result = embed_payload(
+                cover_image=self.cover_image,
+                payload_text=payload_text,
+                seed=seed,
+                enable_encryption=self.aes_checkbox.isChecked(),
+            )
+        except Exception as exc:  # pragma: no cover - UI feedback path
+            self.run_button.setEnabled(True)
+            self.status_label.setText("Embedding failed")
+            QMessageBox.critical(self, "Embedding Error", str(exc))
+            return
+
+        self.run_button.setEnabled(True)
+        self.save_button.setEnabled(True)
+        self.embed_result = result
+
+        self._update_preview(result.image)
+        self.status_label.setText(
+            f"Embedded {result.bits_embedded} bits (capacity {result.capacity_bits}).\n"
+            f"PSNR: {result.metrics['psnr']:.2f} dB | SSIM: {result.metrics['ssim']:.4f}"
+        )
+
+    def _on_save_stego(self) -> None:
+        if self.embed_result is None:
+            QMessageBox.information(self, "Nothing to Save", "Run embedding first.")
+            return
+
+        file_path, _ = QFileDialog.getSaveFileName(
+            self,
+            "Save Stego PNG",
+            "stego_output.png",
+            "PNG Images (*.png)",
+        )
+        if not file_path:
+            return
+
+        try:
+            image_io.save_png(Path(file_path), self.embed_result.image)
+        except OSError as exc:
+            QMessageBox.critical(self, "Save Error", f"Failed to save PNG: {exc}")
+            return
+
+        QMessageBox.information(self, "Stego Saved", f"Stego image saved to {file_path}")
+
+    # ------------------------------------------------------------- Utilities --
+    def _update_preview(self, image: np.ndarray) -> None:
+        h, w, _ = image.shape
+        buffer = np.ascontiguousarray(image)
+        qimage = QImage(buffer.data, w, h, QImage.Format.Format_RGB888)
+        pixmap = QPixmap.fromImage(qimage.copy()).scaled(
+            400,
+            400,
+            Qt.AspectRatioMode.KeepAspectRatio,
+            Qt.TransformationMode.SmoothTransformation,
+        )
+        self.cover_label.setPixmap(pixmap)
