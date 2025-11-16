@@ -1,21 +1,11 @@
-"""Capacity planning utilities."""
+"""Capacity refinement utilities."""
 from __future__ import annotations
 
 import numpy as np
 
-from ..analyzer.region_classifier import EDGE, SMOOTH, TEXTURE
 
-
-def compute_capacity_map(classification: np.ndarray, surface: np.ndarray) -> np.ndarray:
-    """Translate region classification into per-pixel bit capacity."""
-    capacity = np.zeros_like(surface, dtype=np.uint8)
-
-    smooth_mask = classification == SMOOTH
-    texture_mask = classification == TEXTURE
-    edge_mask = classification == EDGE
-
-    capacity[smooth_mask & (surface > 0.12)] = 1
-    capacity[texture_mask] = 2
-    capacity[edge_mask] = 3
-
-    return capacity
+def refine_capacity_map(base_capacity: np.ndarray, surface_map: np.ndarray) -> np.ndarray:
+    refined = base_capacity.astype(np.float32)
+    refined += surface_map * 0.5
+    refined = np.clip(refined, 0, 3)
+    return refined.astype(np.int32)

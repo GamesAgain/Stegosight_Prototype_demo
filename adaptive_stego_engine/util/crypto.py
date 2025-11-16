@@ -1,58 +1,49 @@
-"""Cryptographic primitives for the Adaptive Steganography Engine."""
+"""Symmetric cryptographic primitives."""
 from __future__ import annotations
 
 import os
-from dataclasses import dataclass
+from typing import Optional, Tuple
 
-from cryptography.hazmat.backends import default_backend
 from cryptography.hazmat.primitives import hashes
-from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
+from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 from cryptography.hazmat.primitives.kdf.pbkdf2 import PBKDF2HMAC
 
 
-@dataclass
-class EncryptionResult:
-    nonce: bytes
-    ciphertext: bytes
-    tag: bytes
+PBKDF2_ITERATIONS = 100_000
+PBKDF2_SALT_LEN = 16
+AES_NONCE_LEN = 12
+AES_TAG_LEN = 16
 
 
-def generate_salt(length: int = 16) -> bytes:
-    return os.urandom(length)
-
-
-def derive_key(seed: str, salt: bytes, iterations: int = 200_000, length: int = 32) -> bytes:
-    """Derive a symmetric key using PBKDF2-HMAC-SHA256."""
+def derive_key_pbkdf2(
+    password: str,
+    salt: bytes,
+    length: int = 32,
+    iterations: int = PBKDF2_ITERATIONS,
+) -> bytes:
+    if not password:
+        raise ValueError("Password must not be empty")
     kdf = PBKDF2HMAC(
         algorithm=hashes.SHA256(),
         length=length,
         salt=salt,
         iterations=iterations,
-        backend=default_backend(),
     )
-    return kdf.derive(seed.encode("utf-8"))
+    return kdf.derive(password.encode("utf-8"))
 
 
-def aes_gcm_encrypt(key: bytes, plaintext: bytes, associated_data: bytes = b"") -> EncryptionResult:
-    """Encrypt data with AES-GCM."""
-    nonce = os.urandom(12)
-    encryptor = Cipher(algorithms.AES(key), modes.GCM(nonce), backend=default_backend()).encryptor()
-    if associated_data:
-        encryptor.authenticate_additional_data(associated_data)
-    ciphertext = encryptor.update(plaintext) + encryptor.finalize()
-    return EncryptionResult(nonce=nonce, ciphertext=ciphertext, tag=encryptor.tag)
+def aes_gcm_encrypt(key: bytes, plaintext: bytes, aad: Optional[bytes] = None) -> Tuple[bytes, bytes]:
+    nonce = os.urandom(AES_NONCE_LEN)
+    aesgcm = AESGCM(key)
+    ciphertext = aesgcm.encrypt(nonce, plaintext, aad)
+    return nonce, ciphertext
 
 
 def aes_gcm_decrypt(
     key: bytes,
     nonce: bytes,
-    tag: bytes,
-    ciphertext: bytes,
-    associated_data: bytes = b"",
+    ct_with_tag: bytes,
+    aad: Optional[bytes] = None,
 ) -> bytes:
-    """Decrypt AES-GCM data and return the plaintext."""
-    decryptor = Cipher(algorithms.AES(key), modes.GCM(nonce, tag), backend=default_backend()).decryptor()
-    if associated_data:
-        decryptor.authenticate_additional_data(associated_data)
-    plaintext = decryptor.update(ciphertext) + decryptor.finalize()
-    return plaintext
+    aesgcm = AESGCM(key)
+    return aesgcm.decrypt(nonce, ct_with_tag, aad)

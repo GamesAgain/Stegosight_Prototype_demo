@@ -2,32 +2,26 @@
 from __future__ import annotations
 
 import numpy as np
-from scipy import ndimage
 
 
-NEIGHBOR_KERNEL = np.array(
-    [
-        [1, 1, 1],
-        [1, 0, 1],
-        [1, 1, 1],
-    ],
-    dtype=np.float64,
-)
+NEIGHBOR_KERNEL = [(-1, -1), (-1, 0), (-1, 1), (0, -1), (0, 1), (1, -1), (1, 0), (1, 1)]
 
 
-def adjust_capacity(image: np.ndarray, capacity: np.ndarray) -> np.ndarray:
-    """Reduce capacity for pixels that deviate strongly from their neighborhood."""
-    grayscale = image.mean(axis=2).astype(np.float64)
-    neighbor_sum = ndimage.convolve(grayscale, NEIGHBOR_KERNEL, mode="reflect")
-    neighbor_mean = neighbor_sum / NEIGHBOR_KERNEL.sum()
-
-    deviation = np.abs(grayscale - neighbor_mean)
-    adjusted = capacity.astype(np.int16).copy()
-
-    adjusted[deviation > 60] = np.maximum(adjusted[deviation > 60] - 2, 0)
-    adjusted[(deviation > 30) & (deviation <= 60)] = np.maximum(
-        adjusted[(deviation > 30) & (deviation <= 60)] - 1,
-        0,
-    )
-
-    return adjusted.astype(np.uint8)
+def adjust_capacity_for_pixel(gray: np.ndarray, y: int, x: int, requested_cap: int) -> int:
+    h, w = gray.shape
+    neighbors = []
+    for dy, dx in NEIGHBOR_KERNEL:
+        ny, nx = y + dy, x + dx
+        if 0 <= ny < h and 0 <= nx < w:
+            neighbors.append(gray[ny, nx])
+    if not neighbors:
+        return min(1, requested_cap)
+    mean_neighbor = float(np.mean(neighbors))
+    deviation = abs(float(gray[y, x]) - mean_neighbor)
+    if deviation < 5:
+        return requested_cap
+    if deviation < 12:
+        return max(1, requested_cap - 1)
+    if deviation < 20:
+        return max(1, requested_cap - 2)
+    return 0

@@ -1,28 +1,23 @@
-"""Deterministic PRNG helpers for reproducible pixel ordering."""
+"""Deterministic PRNG helpers used to build pixel ordering."""
 from __future__ import annotations
 
 import hashlib
-import random
-from typing import MutableSequence
+from typing import Iterable
+
+import numpy as np
 
 
-def _seed_to_int(seed: str) -> int:
+def _seed_from_string(seed: str) -> int:
     digest = hashlib.sha256(seed.encode("utf-8")).digest()
-    return int.from_bytes(digest, "big")
+    return int.from_bytes(digest[:8], "big", signed=False)
 
 
-def deterministic_shuffle(sequence: MutableSequence, seed: str) -> None:
-    """Shuffle a mutable sequence using a deterministic PRNG."""
-    rng = random.Random(_seed_to_int(seed))
-    rng.shuffle(sequence)
+def shuffle_indices(indices: Iterable[int], seed: str) -> np.ndarray:
+    arr = np.array(list(indices), dtype=np.int64)
+    rng = np.random.default_rng(_seed_from_string(seed))
+    rng.shuffle(arr)
+    return arr
 
 
-def random_bytes(length: int, seed: str) -> bytes:
-    """Generate reproducible pseudo-random bytes from a seed."""
-    rng = random.Random(_seed_to_int(seed))
-    return bytes(rng.getrandbits(8) for _ in range(length))
-
-
-def random_state(seed: str) -> random.Random:
-    """Return a deterministic random number generator from the seed."""
-    return random.Random(_seed_to_int(seed))
+def random_state(seed: str) -> np.random.Generator:
+    return np.random.default_rng(_seed_from_string(seed))
