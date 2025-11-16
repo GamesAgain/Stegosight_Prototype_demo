@@ -1,129 +1,66 @@
-# Adaptive Steganography Engine v2.0.0
+# Adaptive Steganography Engine v3.0.0
 
-Adaptive Steganography Engine v2.0.0 is a production-ready Python 3.12 project delivering a
-state-of-the-art, texture-aware steganography workflow with optional AES-GCM encryption and a
-full PyQt6 GUI. The system supports adaptive, capacity-optimised embedding in 24-bit PNG covers
-and guarantees precise payload recovery through a deterministic reverse pipeline.
+Adaptive Steganography Engine v3.0.0 delivers a hardened multi-mode hiding pipeline with an asynchronous PyQt6 desktop interface.  It performs texture-aware multi-bit LSB embedding for PNG RGB images, supports password-based and public-key-based payload protection, and enforces strict visual quality thresholds.
 
-## Key Features
+## Features
 
-- **Cover compliance** – accepts only 24-bit PNG images and preserves original dimensions.
-- **Payload support** – embeds UTF-8 text from direct input or `.txt` files.
-- **WARPLAN STEG2 hardening** – plaintext header (`STEGO` + payload length) or fully encrypted
-  header/payload bundle with PBKDF2-HMAC-SHA256 derived keys and AES-GCM.
-- **Adaptive analysis** – Sobel gradients and local entropy build a composite surface score used to
-  classify regions into Smooth, Texture, and Edge zones with tiered bit capacities.
-- **Predictive noise correction** – neighbourhood-aware capacity reduction prevents artifacts in
-  smooth areas.
-- **Drift-aware planning** – statistical simulations on 8×8 blocks downgrade risky regions before
-  embedding, ensuring PSNR ≥ 48 dB and SSIM ≥ 0.985.
-- **Deterministic embedding order** – pixels sorted by entropy and shuffled with a seed-controlled
-  PRNG ensure reproducible placement during extraction.
-- **Quality metrics** – PSNR, SSIM, and histogram drift calculated after embedding.
-- **Full reverse pipeline** – extraction recomputes the adaptive capacity map, rebuilds the PRNG
-  ordering, decrypts headers/payloads when required, and outputs UTF-8 text.
-- **Modern GUI** – dual-tab PyQt6 interface for embedding and extraction with live previews,
-  encryption toggles, and save options.
+- **Adaptive embedding** – gradient, entropy, and surface analysis determine safe per-pixel capacity, enforce predictive noise correction, and enable block-level drift rollback.
+- **Symmetric (Password) mode** – passwords are converted to AES-256 keys via PBKDF2.  Headers are always encrypted with AES-GCM, and payloads can optionally be AES-GCM protected with a GUI toggle.
+- **Public-Key mode** – RSA-OAEP encrypts a random AES session key which protects both header and payload (hybrid cryptosystem).  The GUI can generate, load, and manage RSA PEM key pairs without external tooling.
+- **Async PyQt6 GUI** – embedding and extraction run inside worker threads so the window stays responsive.  Progress bars and status labels describe each pipeline phase.  Tabs provide embedding, extraction, and key-management flows with previews and save dialogs.
+- **Quality enforcement** – PSNR ≥ 48 dB, SSIM ≥ 0.985, and histogram drift ≤ 0.02 are required; otherwise embedding is aborted with a clear error.
 
-## Project Layout
+## Using the Application
 
-```
-adaptive_stego_engine/
-├── main.py
-├── README.md
-├── analyzer/
-│   ├── entropy.py
-│   ├── gradient.py
-│   ├── region_classifier.py
-│   └── texture_map.py
-├── embedder/
-│   ├── capacity.py
-│   ├── drift_control.py
-│   ├── embed_controller.py
-│   ├── embedding.py
-│   ├── noise_predictor.py
-│   └── pixel_order.py
-├── extractor/
-│   ├── bit_reader.py
-│   ├── extract_controller.py
-│   └── extraction.py
-├── gui/
-│   ├── __init__.py
-│   ├── embed_tab.py
-│   ├── extract_tab.py
-│   └── main_window.py
-└── util/
-    ├── bitstream.py
-    ├── crypto.py
-    ├── header.py
-    ├── image_io.py
-    ├── metrics.py
-    └── prng.py
-```
-
-## Installation
-
-Create a virtual environment (Python 3.12.0) and install dependencies:
+1. Install Python 3.12 plus the dependencies listed below.
+2. Launch the GUI:
 
 ```bash
-python3.12 -m venv .venv
-source .venv/bin/activate
+cd adaptive_stego_engine
+python main.py
+```
+
+3. In the **Embed** tab:
+   - Load a 24-bit RGB PNG cover image.
+   - Enter or import UTF-8 text.
+   - Choose *Password* mode (enter password, optional AES payload encryption) or *Public Key* mode (browse for a public PEM).  Pixel ordering is tied to the password or public-key fingerprint.
+   - Start embedding.  Review metrics, then save the stego PNG.
+
+4. In the **Extract** tab:
+   - Load the stego PNG and choose the correct mode.
+   - Provide the original password or the matching private PEM.
+   - Run extraction; the payload appears in the text area and can be saved to `.txt`.
+
+5. In the **Keys** tab:
+   - Generate RSA key pairs (2048/3072-bit) and save PEM files.
+   - Load existing keys to populate the Embed/Extract tabs automatically.
+
+## Architecture Overview
+
+- **Analyzer** – produces grayscale, gradient, entropy, and surface maps to classify pixels into smooth/texture/edge regions.
+- **Embedder** – sorts pixels by entropy, shuffles them via seeded PRNG, and embeds bits with predictive noise limits and 8×8 drift control.  Mode-specific bitstreams encapsulate encrypted headers/payloads.
+- **Extractor** – rebuilds the same pixel order, recovers bits, parses the mode-tagged stream, and decrypts payloads via PBKDF2/AES-GCM or RSA-OAEP/AES-GCM.
+- **Utilities** – strict PNG I/O, cryptography helpers, stream/headers, quality metrics, and deterministic PRNG.
+
+## Requirements
+
+- Python 3.12
+- numpy
+- pillow
+- scipy
+- cryptography
+- PyQt6
+- tqdm (optional future CLI progress)
+- (Optional) opencv-python – not required but compatible.
+
+Install dependencies with:
+
+```bash
 pip install -r requirements.txt
 ```
 
-## Running the GUI
+## Notes
 
-```bash
-python -m adaptive_stego_engine.main
-```
-
-### Embedding Workflow
-
-1. Open the **Embed** tab.
-2. Select a 24-bit PNG cover (other formats are rejected).
-3. Enter secret text or load a UTF-8 `.txt` file.
-4. Provide a seed/password used for PRNG ordering and optional encryption.
-5. Toggle **Enable AES Encryption** to encrypt both header and payload (salt and nonce stored
-   before ciphertext as per WARPLAN requirements).
-6. Click **Run Adaptive Embed**. Quality metrics (PSNR, SSIM) are displayed upon success.
-7. Save the stego PNG once satisfied.
-
-### Extraction Workflow
-
-1. Switch to the **Extract** tab and load the stego PNG.
-2. Provide the original seed/password.
-3. Tick **Payload is encrypted** if AES-GCM was used during embedding.
-4. Click **Extract Payload** to recover the UTF-8 message. Save to a text file if needed.
-
-## Command-Line Integration
-
-All heavy lifting resides in the controller modules:
-
-- `adaptive_stego_engine.embedder.embed_controller.embed_payload`
-- `adaptive_stego_engine.extractor.extract_controller.extract_payload`
-
-These functions operate directly on `numpy.ndarray` RGB images, enabling easy scripting or test
-automation outside of the GUI layer.
-
-## Security Notes
-
-- PBKDF2-HMAC-SHA256 with a randomly generated 16-byte salt derives AES-GCM keys.
-- The hardened mode encrypts header and payload, storing the salt, nonce, and tag ahead of the
-  ciphertext. Decryption validates the `STEGO` magic before releasing the payload.
-- Extraction raises descriptive errors on incorrect passwords or tampered data.
-
-## Quality Guarantees
-
-Every embedding run enforces:
-
-- PSNR ≥ 48 dB
-- SSIM ≥ 0.985
-- Histogram drift monitoring via adaptive block simulation prior to writing bits
-
-If the payload cannot be embedded without violating these constraints, the process aborts with a
-clear error message.
-
-## License
-
-This prototype is provided for research and educational purposes. Ensure compliance with local laws
-and regulations when using steganography in your environment.
+- Only 24-bit RGB PNG covers are accepted; any other format triggers a `StegoEngineError`.
+- Payload capacity depends on local texture.  Large, smooth images may not meet payload size or quality thresholds.
+- Headers never appear in plaintext inside the LSB stream; even legacy password mode encrypts header metadata with AES-GCM.
